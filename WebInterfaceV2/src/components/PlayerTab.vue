@@ -62,9 +62,9 @@ onUnmounted(() => clearInterval(timer))
 
         <div style="display: flex; gap: 12px; margin-bottom: 20px; max-width: 540px">
           <input
-            placeholder="粘贴任意链接直接播放（网易云歌曲 / YouTube / 直播流 / 本地路径）"
+            placeholder="粘贴链接，插入为下一首播放（网易云歌曲 / 直播流 / 本地路径）"
             style="flex: 1"
-            @keydown.enter="e => { const v = e.target.value.trim(); if (v) { act(b => api.play(b, v), '已发送播放'); e.target.value = '' } }"
+            @keydown.enter="e => { const v = e.target.value.trim(); if (v) { act(b => api.playNext(b, v), '已插入为下一首'); e.target.value = '' } }"
           />
         </div>
 

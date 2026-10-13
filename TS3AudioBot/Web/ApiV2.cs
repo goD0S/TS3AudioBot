@@ -65,6 +65,7 @@ namespace TS3AudioBot.Web.Api
 			new Route("DELETE", "/cache", (c, _) => ClearCache(c)),
 			new Route("GET", "/bot/{id}/player", (c, p) => PlayerState(c)),
 			new Route("POST", "/bot/{id}/play", (c, p) => Play(c)),
+			new Route("POST", "/bot/{id}/playnext", (c, p) => PlayNext(c)),
 			new Route("POST", "/bot/{id}/pause", (c, p) => Pause(c)),
 			new Route("POST", "/bot/{id}/stop", (c, p) => Stop(c)),
 			new Route("POST", "/bot/{id}/next", (c, p) => Next(c)),
@@ -304,6 +305,50 @@ namespace TS3AudioBot.Web.Api
 					PlayerOf(bot).Paused = false;
 				}
 				await WriteJson(ctx, new { ok = true }).ConfigureAwait(false);
+			}
+			catch (AudioBotException ex)
+			{
+				await WriteError(ctx, ex.Message).ConfigureAwait(false);
+			}
+		}
+
+		/// <summary>Inserts the song as the next one up. When nothing is playing it starts playing instead.</summary>
+		private static async Task PlayNext(HttpContext ctx)
+		{
+			var bot = GetBotOrFirst(ParseId(ctx));
+			var body = await ReadBody<PlayBody>(ctx).ConfigureAwait(false);
+			if (string.IsNullOrWhiteSpace(body.Url))
+			{
+				await WriteError(ctx, "需要 url").ConfigureAwait(false);
+				return;
+			}
+
+			var playManager = PlayManagerOf(bot);
+			var playlistManager = PlaylistManagerOf(bot);
+
+			using var _cookieScope = NeteaseCookieContext.Use(HeaderCookie(ctx));
+			try
+			{
+				if (!playManager.IsPlaying)
+				{
+					await playManager.Play(new InvokerData(Uid.Null), body.Url).ConfigureAwait(false);
+					await WriteJson(ctx, new { ok = true, mode = "play" }).ConfigureAwait(false);
+					return;
+				}
+
+				// resolve now so metadata is captured; playback re-resolves the
+				// url later (netease signed urls never go stale in the queue)
+				var playResource = await ResolverOf(bot).Load(body.Url).ConfigureAwait(false);
+				var item = PlaylistItem.From(playResource);
+
+				int insertAt = Math.Min(playlistManager.Index + 1, playlistManager.CurrentList.Items.Count);
+				playlistManager.ModifyPlaylist(".mix", list =>
+				{
+					if (insertAt > list.Items.Count)
+						insertAt = list.Items.Count;
+					list.Insert(insertAt, item).UnwrapThrow();
+				});
+				await WriteJson(ctx, new { ok = true, mode = "next", position = insertAt + 1 }).ConfigureAwait(false);
 			}
 			catch (AudioBotException ex)
 			{

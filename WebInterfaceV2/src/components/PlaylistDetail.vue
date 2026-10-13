@@ -31,8 +31,8 @@ async function playFrom(index) {
 async function playItem(it) {
   const link = it.link || it.resId
   try {
-    await api.play(activeBotId(), link)
-    showToast('已播放', 'success')
+    await api.playNext(activeBotId(), link)
+    showToast('已插入为下一首', 'success')
   } catch (e) { showToast(e.message, 'error') }
 }
 
@@ -70,7 +70,7 @@ onMounted(load)
               </div>
             </div>
             <div class="row-actions">
-              <button class="icon-btn" title="立即播放" @click="playItem(it)">▶</button>
+              <button class="icon-btn" title="下一首播放" @click="playItem(it)">▶</button>
               <button class="icon-btn" title="从这里播放" @click="playFrom(i)">≡▶</button>
               <a v-if="it.link" class="icon-btn" :href="it.link" target="_blank" title="在网易云打开" style="display:inline-flex">↗</a>
             </div>

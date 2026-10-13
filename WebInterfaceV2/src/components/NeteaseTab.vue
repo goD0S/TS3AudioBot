@@ -95,8 +95,8 @@ async function doSearch() {
 
 async function playSong(s) {
   try {
-    await api.play(activeBotId(), s.link)
-    showToast(`播放「${s.name}」`, 'success')
+    await api.playNext(activeBotId(), s.link)
+    showToast(`「${s.name}」已设为下一首`, 'success')
   } catch (e) { showToast(e.message, 'error') }
 }
 
@@ -208,7 +208,7 @@ async function doMigrate() {
           <div class="row-sub">{{ [s.artists, s.album, s.duration ? fmtTime(s.duration) : ''].filter(Boolean).join(' · ') }}</div>
         </div>
         <div class="row-actions" style="opacity: 1">
-          <button class="icon-btn" title="播放" @click="playSong(s)">▶</button>
+          <button class="icon-btn" title="下一首播放" @click="playSong(s)">▶</button>
           <button class="icon-btn" title="加入队列" @click="enqueueSong(s)">＋</button>
         </div>
       </div>

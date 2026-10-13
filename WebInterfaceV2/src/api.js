@@ -54,6 +54,7 @@ export const api = {
 
   player: (bot) => req('GET', `/bot/${bot}/player`),
   play: (bot, url) => req('POST', `/bot/${bot}/play`, url ? { url } : {}, neteaseHeaders()),
+  playNext: (bot, url) => req('POST', `/bot/${bot}/playnext`, { url }, neteaseHeaders()),
   pause: (bot, value) => req('POST', `/bot/${bot}/pause`, value === undefined ? {} : { value }),
   stop: (bot) => req('POST', `/bot/${bot}/stop`),
   next: (bot) => req('POST', `/bot/${bot}/next`),

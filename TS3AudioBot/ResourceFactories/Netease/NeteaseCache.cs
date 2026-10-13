@@ -45,6 +45,8 @@ namespace TS3AudioBot.ResourceFactories.Netease
 		private readonly SemaphoreSlim downloadSlots = new SemaphoreSlim(2, 2);
 		private readonly ConcurrentDictionary<long, byte> activeDownloads = new ConcurrentDictionary<long, byte>();
 		private readonly object evictLock = new object();
+		private const int MaxQueuedDownloads = 128;
+		private const long MaxSongBytes = 256L * 1024 * 1024;
 
 		public NeteaseCache(bool enabled, string cacheDir, long maxBytesMb, HttpClient? httpClient = null)
 		{
@@ -93,8 +95,13 @@ namespace TS3AudioBot.ResourceFactories.Netease
 			if (!enabled)
 				return false;
 			var target = isVip ? VipFileFor(songId) : FreeFileFor(songId);
-			if (TryGet(songId) != null || !activeDownloads.TryAdd(songId, 0))
+			if (TryGet(songId) != null)
 				return false;
+			lock (evictLock)
+			{
+				if (activeDownloads.Count >= MaxQueuedDownloads || !activeDownloads.TryAdd(songId, 0))
+					return false;
+			}
 
 			_ = Task.Run(async () =>
 			{
@@ -119,23 +126,41 @@ namespace TS3AudioBot.ResourceFactories.Netease
 			return true;
 		}
 
-		private async Task DownloadTo(long songId, string url, bool isVip)
+		internal async Task DownloadTo(long songId, string url, bool isVip)
 		{
 			var target = isVip ? VipFileFor(songId) : FreeFileFor(songId);
 			var temp = target + ".part";
-			using var resp = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
-			resp.EnsureSuccessStatusCode();
-			using var src = await resp.Content.ReadAsStreamAsync().ConfigureAwait(false);
-			using var dst = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 16, useAsync: true);
-			await src.CopyToAsync(dst).ConfigureAwait(false);
-			dst.Close();
-			// sanity check: reject placeholder/empty files
-			if (new FileInfo(temp).Length < 16 * 1024)
+			using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(10));
+			var limit = Math.Min(maxBytes, MaxSongBytes);
+			try
 			{
-				File.Delete(temp);
-				throw new IOException("downloaded file too small, probably a placeholder");
+				using var resp = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, deadline.Token).ConfigureAwait(false);
+				resp.EnsureSuccessStatusCode();
+				if (resp.Content.Headers.ContentLength > limit)
+					throw new IOException("song exceeds the cache download size limit");
+				using var src = await resp.Content.ReadAsStreamAsync(deadline.Token).ConfigureAwait(false);
+				using (var dst = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 16, useAsync: true))
+				{
+					var buffer = new byte[1 << 16];
+					long total = 0;
+					int read;
+					while ((read = await src.ReadAsync(buffer.AsMemory(), deadline.Token).ConfigureAwait(false)) > 0)
+					{
+						total += read;
+						if (total > limit) throw new IOException("song exceeds the cache download size limit");
+						await dst.WriteAsync(buffer.AsMemory(0, read), deadline.Token).ConfigureAwait(false);
+					}
+				}
+				// Reject placeholder/empty files before publishing them to the cache.
+				if (new FileInfo(temp).Length < 16 * 1024)
+					throw new IOException("downloaded file too small, probably a placeholder");
+				File.Move(temp, target, overwrite: true);
 			}
-			File.Move(temp, target, overwrite: true);
+			catch
+			{
+				try { File.Delete(temp); } catch (IOException) { }
+				throw;
+			}
 		}
 
 		private void EvictIfNeeded()

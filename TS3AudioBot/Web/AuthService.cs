@@ -8,130 +8,115 @@
 // program. If not, see <https://opensource.org/licenses/OSL-3.0>.
 
 using System;
-using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 
 namespace TS3AudioBot.Web
 {
-	/// <summary>
-	/// Shared-secret authentication for the web api.
-	/// The key is stored in websecrets.toml (generated on first start) and meant
-	/// to be shared with a trusted group of users. Login issues an HMAC-signed
-	/// bearer token; failed attempts are rate limited per ip.
-	/// </summary>
+	/// <summary>Shared-key login with short-lived, individually revocable sessions.</summary>
 	public sealed class AuthService
 	{
 		private static readonly NLog.Logger Log = NLog.LogManager.GetCurrentClassLogger();
-
 		private const int MaxFailures = 5;
+		private const int MaxTrackedAddresses = 4096;
+		private const int MaxSessions = 2048;
+		private const int MaxCredentialLength = 256;
 		private static readonly TimeSpan LockoutDuration = TimeSpan.FromMinutes(2);
-		private static readonly TimeSpan TokenLifetime = TimeSpan.FromDays(30);
+		private static readonly TimeSpan TokenLifetime = TimeSpan.FromHours(8);
+		private readonly object sync = new object();
+		private readonly TimeProvider clock;
+		private readonly string key;
+		private readonly Dictionary<string, DateTimeOffset> sessions = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
+		private readonly Dictionary<string, (int fails, DateTimeOffset lastFailure, DateTimeOffset lockedUntil)> failures =
+			new Dictionary<string, (int, DateTimeOffset, DateTimeOffset)>(StringComparer.Ordinal);
 
-		private string _key = string.Empty;
-		private byte[] _hmacKey = Array.Empty<byte>();
-
-		private readonly ConcurrentDictionary<string, (int fails, DateTime lockedUntil)> _failures =
-			new ConcurrentDictionary<string, (int, DateTime)>();
-
-		public AuthService(string baseDir)
+		public AuthService(string baseDir, TimeProvider? clock = null)
 		{
+			this.clock = clock ?? TimeProvider.System;
 			SecretsStore.Init(baseDir);
-			LoadOrCreate();
+			key = SecretsStore.Get("api_key") ?? string.Empty;
+			if (string.IsNullOrWhiteSpace(key))
+			{
+				key = Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
+				SecretsStore.Set("api_key", key);
+				Log.Warn("New web api access key saved to websecrets.ini. Read it from that owner-only file; never publish it in logs.");
+			}
+			if (key.Length > MaxCredentialLength)
+				throw new InvalidOperationException("The configured API key exceeds the supported credential length.");
 		}
 
-		public bool AuthEnabled => !string.IsNullOrEmpty(_key);
+		public bool AuthEnabled => !string.IsNullOrEmpty(key);
 
-		private void LoadOrCreate()
+		/// <summary>Login state is bounded and updates atomically, including concurrent failures.</summary>
+		public string? Login(string? credential, string ip)
 		{
-			_key = SecretsStore.Get("api_key") ?? string.Empty;
-
-			if (string.IsNullOrWhiteSpace(_key))
+			lock (sync)
 			{
-				var bytes = RandomNumberGenerator.GetBytes(32);
-				_key = Base64UrlEncode(bytes);
-				SecretsStore.Set("api_key", _key);
-				Log.Warn("==========================================================");
-				Log.Warn(" New web api access key generated and saved to websecrets.toml:");
-				Log.Warn("   {0}", _key);
-				Log.Warn(" Share this key only with users who may control the bot.");
-				Log.Warn("==========================================================");
+				var now = clock.GetUtcNow();
+				foreach (var address in failures.Where(x => x.Value.lastFailure + LockoutDuration <= now).Select(x => x.Key).ToArray())
+					failures.Remove(address);
+				if (failures.TryGetValue(ip, out var failure) && failure.lockedUntil > now)
+					return null;
+
+				if (!FixedTimeEquals(credential, key))
+				{
+					if (!failures.ContainsKey(ip) && failures.Count >= MaxTrackedAddresses)
+						return null;
+					var count = failure.fails + 1;
+					failures[ip] = (count, now, count >= MaxFailures ? now + LockoutDuration : DateTimeOffset.MinValue);
+					Log.Warn("Failed web login from {0} (attempt {1}/{2})", ip, count, MaxFailures);
+					return null;
+				}
+
+				failures.Remove(ip);
+				foreach (var token in sessions.Where(x => x.Value <= now).Select(x => x.Key).ToArray())
+					sessions.Remove(token);
+				if (sessions.Count >= MaxSessions)
+					return null;
+
+				// Fresh randomness prevents logins in the same second sharing a session.
+				var session = Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
+				sessions.Add(session, now + TokenLifetime);
+				return session;
 			}
-
-			_hmacKey = SHA256.HashData(Encoding.UTF8.GetBytes("ts3ab-token:" + _key));
-		}
-
-		/// <summary>Verifies the shared key and returns a signed token, or null when rejected.</summary>
-		public string? Login(string? key, string ip)
-		{
-			if (!AuthEnabled)
-				return string.Empty; // auth disabled => anonymous ok
-
-			var now = DateTime.UtcNow;
-			if (_failures.TryGetValue(ip, out var entry) && entry.lockedUntil > now)
-				return null;
-
-			if (!FixedTimeEquals(key, _key))
-			{
-				int prevFails;
-				if (entry.lockedUntil > now)
-					prevFails = entry.fails;             // currently locked out
-				else if (entry.lockedUntil != DateTime.MinValue)
-					prevFails = 0;                       // a previous lockout expired
-				else
-					prevFails = entry.fails;             // never locked; keep counting
-				int newFails = prevFails + 1;
-				_failures[ip] = newFails >= MaxFailures
-					? (newFails, now + LockoutDuration)
-					: (newFails, DateTime.MinValue);
-				Log.Warn("Failed web login from {0} (attempt {1}/{2})", ip, newFails, MaxFailures);
-				return null;
-			}
-
-			_failures.TryRemove(ip, out _);
-			var expiry = DateTimeOffset.UtcNow.Add(TokenLifetime).ToUnixTimeSeconds();
-			var payload = expiry.ToString(System.Globalization.CultureInfo.InvariantCulture);
-			var sig = B64Url(HMAC(payload));
-			return payload + "." + sig;
 		}
 
 		public bool ValidateToken(string? token)
 		{
-			if (!AuthEnabled)
+			if (string.IsNullOrEmpty(token) || token.Length > MaxCredentialLength)
+				return false;
+			lock (sync)
+			{
+				if (!sessions.TryGetValue(token, out var expiry))
+					return false;
+				if (expiry <= clock.GetUtcNow())
+				{
+					sessions.Remove(token);
+					return false;
+				}
 				return true;
-			if (string.IsNullOrEmpty(token))
-				return false;
-			var dot = token.IndexOf('.');
-			if (dot <= 0 || dot == token.Length - 1)
-				return false;
-			var payload = token.Substring(0, dot);
-			var sig = token.Substring(dot + 1);
-			if (!long.TryParse(payload, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var expiry))
-				return false;
-			if (expiry < DateTimeOffset.UtcNow.ToUnixTimeSeconds())
-				return false;
-			var expected = B64Url(HMAC(payload));
-			return FixedTimeEquals(sig, expected);
+			}
 		}
 
-		/// <summary>Accepts either a valid token or the raw shared key (for scripts / sse query param).</summary>
-		public bool ValidateAny(string? credential)
-			=> ValidateToken(credential) || FixedTimeEquals(credential, _key);
+		public void RevokeToken(string? token)
+		{
+			if (string.IsNullOrEmpty(token) || token.Length > MaxCredentialLength)
+				return;
+			lock (sync) sessions.Remove(token);
+		}
 
-		private byte[] HMAC(string payload)
-			=> new HMACSHA256(_hmacKey).ComputeHash(Encoding.UTF8.GetBytes(payload));
+		/// <summary>The raw shared key remains supported in X-API-Key for trusted scripts.</summary>
+		public bool ValidateAny(string? credential) => ValidateToken(credential) || FixedTimeEquals(credential, key);
 
 		private static bool FixedTimeEquals(string? a, string? b)
 		{
-			if (string.IsNullOrEmpty(a) || string.IsNullOrEmpty(b))
+			if (string.IsNullOrEmpty(a) || string.IsNullOrEmpty(b) || a.Length > MaxCredentialLength)
 				return false;
-			var ba = Encoding.UTF8.GetBytes(a);
-			var bb = Encoding.UTF8.GetBytes(b);
-			return CryptographicOperations.FixedTimeEquals(ba, bb);
+			return CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(a), Encoding.UTF8.GetBytes(b));
 		}
 
-		private static string B64Url(byte[] data) => Convert.ToBase64String(data).TrimEnd('=').Replace('+', '-').Replace('/', '_');
-
-		private static string Base64UrlEncode(byte[] data) => B64Url(data);
+		private static string Base64UrlEncode(byte[] data) => Convert.ToBase64String(data).TrimEnd('=').Replace('+', '-').Replace('/', '_');
 	}
 }

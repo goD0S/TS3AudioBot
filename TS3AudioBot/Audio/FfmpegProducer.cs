@@ -8,6 +8,7 @@
 // program. If not, see <https://opensource.org/licenses/OSL-3.0>.
 
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
@@ -29,9 +30,6 @@ namespace TS3AudioBot.Audio
 		private readonly Id id;
 		private static readonly Regex FindDurationMatch = new Regex(@"^\s*Duration: (\d+):(\d\d):(\d\d).(\d\d)", Util.DefaultRegexConfig);
 		private static readonly Regex IcyMetadataMacher = new Regex("((\\w+)='(.*?)';\\s*)+", Util.DefaultRegexConfig);
-		private const string PreLinkConf = "-hide_banner -nostats -threads 1 -i \"";
-		private const string PostLinkConf = "\" -ac 2 -ar 48000 -f s16le -acodec pcm_s16le pipe:1";
-		private const string LinkConfIcy = "-hide_banner -nostats -threads 1 -i pipe:0 -ac 2 -ar 48000 -f s16le -acodec pcm_s16le pipe:1";
 		private static readonly TimeSpan retryOnDropBeforeEnd = TimeSpan.FromSeconds(10);
 
 		private readonly ConfToolsFfmpeg config;
@@ -195,17 +193,7 @@ namespace TS3AudioBot.Audio
 			StopFfmpegProcess();
 			Log.Trace("Start request {0}", url);
 
-			string arguments;
 			var offset = offsetOpt ?? TimeSpan.Zero;
-			if (offset > TimeSpan.Zero)
-			{
-				var seek = string.Format(CultureInfo.InvariantCulture, @"-ss {0:hh\:mm\:ss\.fff}", offset);
-				arguments = string.Concat(seek, " ", PreLinkConf, url, PostLinkConf, " ", seek);
-			}
-			else
-			{
-				arguments = string.Concat(PreLinkConf, url, PostLinkConf);
-			}
 
 			var newInstance = new FfmpegInstance(
 				url,
@@ -214,7 +202,7 @@ namespace TS3AudioBot.Audio
 					SongPositionOffset = offset,
 				});
 
-			return StartFfmpegProcessInternal(newInstance, arguments);
+			return StartFfmpegProcessInternal(newInstance, BuildArguments(url, offset));
 		}
 
 		private async Task<R<FfmpegInstance, string>> StartFfmpegProcessIcy(string url)
@@ -250,7 +238,7 @@ namespace TS3AudioBot.Audio
 					Name = $"IcyStreamReader[{id}]",
 				}.Start();
 
-				return StartFfmpegProcessInternal(newInstance, LinkConfIcy);
+				return StartFfmpegProcessInternal(newInstance, BuildArguments("pipe:0", TimeSpan.Zero));
 			}
 			catch (Exception ex)
 			{
@@ -260,23 +248,35 @@ namespace TS3AudioBot.Audio
 			}
 		}
 
-		private R<FfmpegInstance, string> StartFfmpegProcessInternal(FfmpegInstance instance, string arguments)
+		internal static string[] BuildArguments(string url, TimeSpan offset)
+		{
+			var arguments = new List<string>();
+			var seek = offset.ToString(@"hh\:mm\:ss\.fff", CultureInfo.InvariantCulture);
+			if (offset > TimeSpan.Zero) arguments.AddRange(new[] { "-ss", seek });
+			arguments.AddRange(new[] { "-hide_banner", "-nostats", "-threads", "1", "-i", url,
+				"-ac", "2", "-ar", "48000", "-f", "s16le", "-acodec", "pcm_s16le", "pipe:1" });
+			if (offset > TimeSpan.Zero) arguments.AddRange(new[] { "-ss", seek });
+			return arguments.ToArray();
+		}
+
+		private R<FfmpegInstance, string> StartFfmpegProcessInternal(FfmpegInstance instance, IEnumerable<string> arguments)
 		{
 			try
 			{
 				instance.FfmpegProcess.StartInfo = new ProcessStartInfo
 				{
 					FileName = config.Path.Value,
-					Arguments = arguments,
 					RedirectStandardOutput = true,
 					RedirectStandardInput = true,
 					RedirectStandardError = true,
 					UseShellExecute = false,
 					CreateNoWindow = true,
 				};
+				foreach (var argument in arguments)
+					instance.FfmpegProcess.StartInfo.ArgumentList.Add(argument);
 				instance.FfmpegProcess.EnableRaisingEvents = true;
 
-				Log.Debug("Starting ffmpeg with {0}", arguments);
+				Log.Debug("Starting ffmpeg with individually escaped arguments");
 				instance.FfmpegProcess.ErrorDataReceived += instance.FfmpegProcess_ErrorDataReceived;
 				instance.FfmpegProcess.Start();
 				instance.FfmpegProcess.BeginErrorReadLine();

@@ -1,14 +1,25 @@
 const BASE = '/api/v2'
 const TOKEN_KEY = 'ab_token'
 
-export function getToken() { return localStorage.getItem(TOKEN_KEY) || '' }
-export function setToken(t) { localStorage.setItem(TOKEN_KEY, t) }
-export function clearToken() { localStorage.removeItem(TOKEN_KEY) }
+// Remove credentials persisted by older releases; do not migrate them silently.
+localStorage.removeItem(TOKEN_KEY)
+export function getToken() { return sessionStorage.getItem(TOKEN_KEY) || '' }
+export function setToken(t) { sessionStorage.setItem(TOKEN_KEY, t) }
+export function clearToken() {
+  sessionStorage.removeItem(TOKEN_KEY)
+  localStorage.removeItem(TOKEN_KEY)
+}
 
-// user's own netease cookie: lives ONLY in this browser, sent per request
+// The personal cookie lives in page memory, not persistent browser storage.
 const COOKIE_KEY = 'ab_netease_cookie'
-export function getNeteaseCookie() { return localStorage.getItem(COOKIE_KEY) || '' }
-export function setNeteaseCookie(c) { localStorage.setItem(COOKIE_KEY, c) }
+localStorage.removeItem(COOKIE_KEY)
+let neteaseCookie = ''
+export function getNeteaseCookie() { return neteaseCookie }
+export function setNeteaseCookie(c) { neteaseCookie = c || '' }
+export function clearCredentials() {
+  clearToken()
+  setNeteaseCookie('')
+}
 
 export function neteaseHeaders() {
   const c = getNeteaseCookie()
@@ -27,7 +38,7 @@ async function req(method, path, body, headers = {}) {
   }
   const resp = await fetch(BASE + path, opt)
   if (resp.status === 401) {
-    clearToken()
+    if (getToken() === token) clearCredentials()
     throw new AuthError('需要密钥登录')
   }
   let data = null
@@ -47,6 +58,11 @@ export const api = {
     return r
   },
   authState: () => req('GET', '/auth/state'),
+  logout: async () => {
+    const token = getToken()
+    try { return await req('POST', '/auth/logout', {}) }
+    finally { if (getToken() === token) clearCredentials() }
+  },
 
   status: () => req('GET', '/status'),
   cache: () => req('GET', '/cache'),
@@ -98,11 +114,16 @@ export function connectEvents(onState, onAuthFail) {
     while (!closed) {
       controller = new AbortController()
       try {
+        const token = getToken()
         const resp = await fetch(`${BASE}/events`, {
-          headers: { Authorization: 'Bearer ' + getToken() },
+          headers: { Authorization: 'Bearer ' + token },
           signal: controller.signal,
         })
-        if (resp.status === 401) { onAuthFail?.(); return }
+        if (resp.status === 401) {
+          if (getToken() === token) { clearCredentials(); onAuthFail?.() }
+          return
+        }
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
         const reader = resp.body.getReader()
         const decoder = new TextDecoder()
         let buf = ''

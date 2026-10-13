@@ -24,8 +24,11 @@ const migrateResult = ref(null)
 
 function saveCookie() {
   const c = cookieInput.value.trim()
-  if (c) setNeteaseCookie(c)
-  useCookie.value = c.length > 0
+  if (c) {
+    setNeteaseCookie(c)
+    cookieInput.value = ''
+  }
+  useCookie.value = getNeteaseCookie().length > 0
 }
 
 async function checkCookie() {
@@ -128,7 +131,7 @@ async function doMigrate() {
     <div class="card" style="padding: 20px; margin-bottom: 18px">
       <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px">
         <div style="font-weight: 600">
-          <span v-if="useCookie" style="color: var(--ok)">✓ 已启用个人 cookie（仅保存在此浏览器）</span>
+          <span v-if="useCookie" style="color: var(--ok)">✓ 已启用个人 cookie（仅本页内存，刷新后清除）</span>
           <span v-else style="color: var(--text-dim)">未启用 cookie（VIP 歌曲将无法完整播放）</span>
         </div>
         <button class="btn small" @click="showGuide = !showGuide">{{ showGuide ? '收起教程 ▲' : '如何获取 MUSIC_U？▼' }}</button>
@@ -140,12 +143,12 @@ async function doMigrate() {
         <div class="guide-step"><span class="guide-num">3</span><div>左侧找到 <b>Cookies → https://music.163.com</b>，在列表里找到名为 <b>MUSIC_U</b> 的条目</div></div>
         <div class="guide-step"><span class="guide-num">4</span><div>双击它的值，完整复制（一长串字母数字），粘贴到下方输入框</div></div>
         <div class="guide-privacy">
-          🔒 隐私说明：cookie 只保存在<b>你自己的浏览器</b>里，导入请求时随请求使用一次后立即丢弃（用完即焚），服务器不做任何持久化。请不要把 cookie 发给别人——它等同你的登录凭证。
+          🔒 隐私说明：cookie 仅保存在<b>本页内存</b>中，刷新、关闭页面或退出登录后清除；使用时会发送给服务器处理，服务器不做持久化。请不要把 cookie 发给别人——它等同你的登录凭证。
         </div>
       </div>
 
       <div style="display: flex; gap: 10px; margin-top: 6px">
-        <input v-model="cookieInput" placeholder="粘贴你的 MUSIC_U cookie（可选，VIP 歌曲需要）" style="flex: 1" />
+        <input v-model="cookieInput" type="password" autocomplete="off" placeholder="粘贴你的 MUSIC_U cookie（可选，VIP 歌曲需要）" style="flex: 1" />
         <button class="btn" :disabled="cookieChecking || !cookieInput.trim()" @click="checkCookie">
           <span v-if="cookieChecking" class="spin"></span>
           <template v-else>验证</template>

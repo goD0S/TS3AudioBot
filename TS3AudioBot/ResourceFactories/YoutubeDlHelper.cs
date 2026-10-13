@@ -28,9 +28,6 @@ namespace TS3AudioBot.ResourceFactories
 		public static ConfPath? DataObj { private get; set; }
 		private static string? YoutubeDlPath => DataObj?.Path.Value;
 
-		private const string ParamGetSingleVideo = " --no-warnings --dump-json --id --";
-		private const string ParamGetPlaylist = "--no-warnings --yes-playlist --flat-playlist --dump-single-json --id --";
-		private const string ParamGetSearch = "--no-warnings --flat-playlist --dump-single-json -- ytsearch10:";
 
 		public static async Task<JsonYtdlDump> GetSingleVideo(string id)
 		{
@@ -38,8 +35,8 @@ namespace TS3AudioBot.ResourceFactories
 			if (ytdlPath is null)
 				throw Error.LocalStr(strings.error_ytdl_not_found);
 
-			var param = $"{ytdlPath.Value.param}{ParamGetSingleVideo} {id}";
-			return await RunYoutubeDl<JsonYtdlDump>(ytdlPath.Value.ytdlpath, param);
+			var args = new[] { "--no-warnings", "--dump-json", "--id", "--", id };
+			return await RunYoutubeDl<JsonYtdlDump>(ytdlPath.Value.ytdlpath, BuildArguments(ytdlPath.Value.param, args));
 		}
 
 		public static async Task<JsonYtdlPlaylistDump> GetPlaylistAsync(string url)
@@ -48,8 +45,8 @@ namespace TS3AudioBot.ResourceFactories
 			if (ytdlPath is null)
 				throw Error.LocalStr(strings.error_ytdl_not_found);
 
-			var param = $"{ytdlPath.Value.param}{ParamGetPlaylist} {url}";
-			return await RunYoutubeDl<JsonYtdlPlaylistDump>(ytdlPath.Value.ytdlpath, param);
+			var args = new[] { "--no-warnings", "--yes-playlist", "--flat-playlist", "--dump-single-json", "--id", "--", url };
+			return await RunYoutubeDl<JsonYtdlPlaylistDump>(ytdlPath.Value.ytdlpath, BuildArguments(ytdlPath.Value.param, args));
 		}
 
 		public static async Task<JsonYtdlPlaylistDump> GetSearchAsync(string text)
@@ -58,8 +55,8 @@ namespace TS3AudioBot.ResourceFactories
 			if (ytdlPath is null)
 				throw Error.LocalStr(strings.error_ytdl_not_found);
 
-			var param = $"{ytdlPath.Value.param}{ParamGetSearch}\"{text}\"";
-			return await RunYoutubeDl<JsonYtdlPlaylistDump>(ytdlPath.Value.ytdlpath, param);
+			var args = new[] { "--no-warnings", "--flat-playlist", "--dump-single-json", "--", "ytsearch10:" + text };
+			return await RunYoutubeDl<JsonYtdlPlaylistDump>(ytdlPath.Value.ytdlpath, BuildArguments(ytdlPath.Value.param, args));
 		}
 
 		public static (string ytdlpath, string param)? FindYoutubeDl()
@@ -111,12 +108,31 @@ namespace TS3AudioBot.ResourceFactories
 			// Example: /home/teamspeak/youtube-dl where 'youtube-dl' is the github project folder
 			string fullCustomPathGhProject = Path.Combine(fullCustomPath, "youtube_dl", "__main__.py");
 			if (File.Exists(fullCustomPathGhProject))
-				return ("python", $"\"{fullCustomPathGhProject}\"");
+				return ("python", fullCustomPathGhProject);
 
 			return null;
 		}
 
-		public static async Task<T> RunYoutubeDl<T>(string path, string args) where T : notnull
+		internal static IEnumerable<string> BuildArguments(string scriptPath, IEnumerable<string> args)
+		{
+			if (!string.IsNullOrEmpty(scriptPath)) yield return scriptPath;
+			foreach (var argument in args) yield return argument;
+		}
+
+		internal static ProcessStartInfo CreateStartInfo(string path, IEnumerable<string> args)
+		{
+			var info = new ProcessStartInfo(path)
+			{
+				UseShellExecute = false,
+				CreateNoWindow = true,
+				RedirectStandardOutput = true,
+				RedirectStandardError = true,
+			};
+			foreach (var argument in args) info.ArgumentList.Add(argument);
+			return info;
+		}
+
+		public static async Task<T> RunYoutubeDl<T>(string path, IEnumerable<string> args) where T : notnull
 		{
 			try
 			{
@@ -125,12 +141,7 @@ namespace TS3AudioBot.ResourceFactories
 				var stdErr = new StringBuilder();
 
 				using var tmproc = new Process();
-				tmproc.StartInfo.FileName = path;
-				tmproc.StartInfo.Arguments = args;
-				tmproc.StartInfo.UseShellExecute = false;
-				tmproc.StartInfo.CreateNoWindow = true;
-				tmproc.StartInfo.RedirectStandardOutput = true;
-				tmproc.StartInfo.RedirectStandardError = true;
+				tmproc.StartInfo = CreateStartInfo(path, args);
 				tmproc.EnableRaisingEvents = true;
 				tmproc.Start();
 				tmproc.OutputDataReceived += (s, e) =>

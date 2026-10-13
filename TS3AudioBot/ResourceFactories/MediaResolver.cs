@@ -158,13 +158,16 @@ namespace TS3AudioBot.ResourceFactories
 			}
 		}
 
-		private static Uri? TryInPath(string pathPrefix, string file)
+		internal static Uri? TryInPath(string pathPrefix, string file)
 		{
 			try
 			{
 				var musicPathPrefix = Path.GetFullPath(pathPrefix);
-				var fullPath = Path.Combine(musicPathPrefix, file);
-				if (fullPath.StartsWith(musicPathPrefix) && File.Exists(fullPath))
+				var fullPath = Path.GetFullPath(Path.Combine(musicPathPrefix, file));
+				var relative = Path.GetRelativePath(musicPathPrefix, fullPath);
+				if (!Path.IsPathRooted(relative) && relative != ".."
+					&& !relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+					&& File.Exists(fullPath))
 					return new Uri(fullPath, UriKind.Absolute);
 			}
 			catch (Exception ex)

@@ -248,7 +248,7 @@ input::placeholder { color: var(--text-faint); }
   background: #232734;
   border: 1px solid var(--border);
   box-shadow: var(--shadow);
-  z-index: 100;
+  z-index: 300;
   font-weight: 500;
   animation: toast-in 0.25s ease;
 }

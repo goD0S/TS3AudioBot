@@ -38,8 +38,7 @@ namespace TS3AudioBot.Web.Api
 	public static class ApiV2
 	{
 		private static readonly NLog.Logger Log = NLog.LogManager.GetCurrentClassLogger();
-		private static readonly JsonSerializer Json = new JsonSerializer { NullValueHandling = NullValueHandling.Ignore, ContractResolver = new Newtonsoft.Json.Serialization.CamelCasePropertyNamesContractResolver() };
-		private static readonly JsonSerializerSettings CamelSettings = new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore, ContractResolver = new Newtonsoft.Json.Serialization.CamelCasePropertyNamesContractResolver() };
+		private static readonly JsonSerializerSettings CamelSettings = new JsonSerializerSettings { MaxDepth = 32, NullValueHandling = NullValueHandling.Ignore, ContractResolver = new Newtonsoft.Json.Serialization.CamelCasePropertyNamesContractResolver() };
 
 		private static CoreInjector injector = null!;
 
@@ -59,6 +58,7 @@ namespace TS3AudioBot.Web.Api
 		private static readonly List<Route> routes = new List<Route>
 		{
 			new Route("POST", "/auth/login", (c, p) => AuthLogin(c)),
+			new Route("POST", "/auth/logout", (c, p) => AuthLogout(c)),
 			new Route("GET", "/auth/state", (c, _) => AuthState(c)),
 			new Route("GET", "/status", (c, _) => Status(c)),
 			new Route("GET", "/cache", (c, _) => GetCache(c)),
@@ -163,7 +163,6 @@ namespace TS3AudioBot.Web.Api
 		private static async Task WriteJson(HttpContext ctx, object data)
 		{
 			ctx.Response.ContentType = "application/json";
-			ctx.Response.Headers["Access-Control-Allow-Origin"] = "*";
 			await ctx.Response.WriteAsync(JsonConvert.SerializeObject(data, CamelSettings)).ConfigureAwait(false);
 		}
 
@@ -175,15 +174,18 @@ namespace TS3AudioBot.Web.Api
 
 		private static async Task<T> ReadBody<T>(HttpContext ctx) where T : new()
 		{
+			if (!ctx.Request.HasJsonContentType())
+				throw new BadHttpRequestException("A JSON request body is required.", 415);
 			try
 			{
 				using var sr = new System.IO.StreamReader(ctx.Request.Body);
-				using var jr = new JsonTextReader(sr);
-				return Json.Deserialize<T>(jr) ?? new T();
+				var body = await sr.ReadToEndAsync(ctx.RequestAborted).ConfigureAwait(false);
+				return JsonConvert.DeserializeObject<T>(body, CamelSettings)
+					?? throw new BadHttpRequestException("A JSON object is required.", 400);
 			}
-			catch (Exception)
+			catch (JsonException)
 			{
-				return new T();
+				throw new BadHttpRequestException("Invalid JSON request body.", 400);
 			}
 		}
 
@@ -596,7 +598,7 @@ namespace TS3AudioBot.Web.Api
 			try
 			{
 				// the user's cookie lives only for this import call
-				using var _cookieScope = NeteaseCookieContext.Use(body.Cookie);
+				using var _cookieScope = NeteaseCookieContext.Use(CheckedCookie(body.Cookie));
 				var result = await NeteaseService.ImportPlaylist(bot, netease, listId, url, body.Replace ?? true).ConfigureAwait(false);
 				await WriteJson(ctx, result).ConfigureAwait(false);
 			}
@@ -715,6 +717,14 @@ namespace TS3AudioBot.Web.Api
 			await WriteJson(ctx, new { authRequired = authEnabled }).ConfigureAwait(false);
 		}
 
+		private static async Task AuthLogout(HttpContext ctx)
+		{
+			var header = ctx.Request.Headers["Authorization"].ToString();
+			if (header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+				Auth?.RevokeToken(header.Substring(7).Trim());
+			await WriteJson(ctx, new { ok = true }).ConfigureAwait(false);
+		}
+
 		// ---------- netease runtime info ----------
 
 		private static async Task NeteaseConfigGet(HttpContext ctx)
@@ -736,7 +746,7 @@ namespace TS3AudioBot.Web.Api
 		private static async Task NeteaseCookieCheck(HttpContext ctx)
 		{
 			var body = await ReadBody<CookieBody>(ctx).ConfigureAwait(false);
-			var cookie = (body.Cookie ?? string.Empty).Trim();
+			var cookie = CheckedCookie(body.Cookie) ?? string.Empty;
 			if (cookie.Length == 0)
 			{
 				await WriteJson(ctx, new { ok = false, message = "请先粘贴 MUSIC_U cookie" }).ConfigureAwait(false);
@@ -1058,12 +1068,11 @@ namespace TS3AudioBot.Web.Api
 		{
 			ctx.Response.ContentType = "text/event-stream";
 			ctx.Response.Headers["Cache-Control"] = "no-cache";
-			ctx.Response.Headers["Access-Control-Allow-Origin"] = "*";
 
 			var token = ctx.RequestAborted;
 			try
 			{
-				while (!token.IsCancellationRequested)
+				while (!token.IsCancellationRequested && Auth is not null && WebServer.IsAuthorized(ctx, Auth))
 				{
 					var manager = injector.GetModule<BotManager>();
 					var bots = new List<object>();
@@ -1105,8 +1114,14 @@ namespace TS3AudioBot.Web.Api
 		/// <summary>Per-request netease cookie (header); never stored.</summary>
 		private static string? HeaderCookie(HttpContext ctx)
 			=> ctx.Request.Headers.TryGetValue("X-Netease-Cookie", out var v) && !string.IsNullOrWhiteSpace(v)
-				? v.ToString().Trim()
+				? CheckedCookie(v.ToString())
 				: null;
+
+		private static string? CheckedCookie(string? cookie)
+		{
+			try { return NeteaseApi.NormalizeCookie(cookie); }
+			catch (ArgumentException) { throw new BadHttpRequestException("Invalid MUSIC_U cookie value.", 400); }
+		}
 
 		private static int ParseId(HttpContext ctx, string name = "id")
 		{

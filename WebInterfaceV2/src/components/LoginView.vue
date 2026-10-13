@@ -13,6 +13,7 @@ async function doLogin() {
   error.value = ''
   try {
     await api.login(key.value.trim())
+    key.value = ''
     emit('ok')
   } catch (e) {
     error.value = e.message === '需要密钥登录' ? '密钥错误' : e.message
@@ -32,6 +33,7 @@ async function doLogin() {
       <input
         v-model="key"
         type="password"
+        autocomplete="off"
         placeholder="访问密钥"
         autofocus
         @keydown.enter="doLogin"

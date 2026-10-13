@@ -130,10 +130,12 @@ namespace TS3AudioBot.Config
 			"An array of all urls the web api should be possible to be accessed with.");
 		public ConfigValue<ushort> Port { get; } = new ConfigValue<ushort>("port", 58913,
 			"The port for the web server.");
+		public ConfigArray<string> CorsOrigins { get; } = new ConfigArray<string>("cors_origins", Array.Empty<string>(),
+			"Exact origins allowed to call the API from another website. Empty means same-origin only; do not use '*'.");
 		public ConfigValue<bool> UseSsl { get; } = new ConfigValue<bool>("use_ssl", true,
 			"Serves the web interface and api over HTTPS. When no certificate is configured\n" +
-			"a self-signed certificate is generated automatically (your browser will show a\n" +
-			"one-time warning; accept it to continue). Strongly recommended when exposed\n" +
+			"a self-signed certificate is generated automatically. Public deployments need\n" +
+			"a trusted certificate covering their actual hostname or IP. Strongly recommended when exposed\n" +
 			"to the internet, since the login key would otherwise travel unencrypted.");
 		public ConfigValue<string> SslCert { get; } = new ConfigValue<string>("ssl_cert", "",
 			"Optional path to a certificate file (PFX/PKCS#12) for HTTPS, e.g. from Let's Encrypt.\n" +

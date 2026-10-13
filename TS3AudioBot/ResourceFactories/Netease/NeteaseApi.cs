@@ -56,9 +56,12 @@ namespace TS3AudioBot.ResourceFactories.Netease
 		private const string ApiBase = "https://music.163.com";
 		private static readonly NLog.Logger Log = NLog.LogManager.GetCurrentClassLogger();
 
-		private static readonly HttpClient Http = new HttpClient(new HttpClientHandler
+		private static readonly HttpClient Http = CreateHttpClient();
+
+		internal static HttpClient CreateHttpClient() => new HttpClient(new HttpClientHandler
 		{
 			AllowAutoRedirect = false,
+			UseCookies = false, // never persist a provider's cookies across different users
 		})
 		{
 			Timeout = TimeSpan.FromSeconds(15),
@@ -66,6 +69,7 @@ namespace TS3AudioBot.ResourceFactories.Netease
 
 		private static HttpRequestMessage Request(HttpMethod method, string url, string? cookie)
 		{
+			cookie = NormalizeCookie(cookie);
 			var msg = new HttpRequestMessage(method, url);
 			msg.Headers.TryAddWithoutValidation("User-Agent",
 				"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
@@ -75,6 +79,15 @@ namespace TS3AudioBot.ResourceFactories.Netease
 				cookieValue += $"; MUSIC_U={cookie.Trim()}";
 			msg.Headers.TryAddWithoutValidation("Cookie", cookieValue);
 			return msg;
+		}
+
+		internal static string? NormalizeCookie(string? cookie)
+		{
+			if (string.IsNullOrWhiteSpace(cookie)) return null;
+			var value = cookie.Trim();
+			if (value.Length > 8192 || value.Any(c => c <= 0x20 || c >= 0x7f || c == ';' || c == ',' || c == '"' || c == '\\'))
+				throw new ArgumentException("Invalid MUSIC_U cookie value.", nameof(cookie));
+			return value;
 		}
 
 		private static async Task<JObject> GetJson(string url, string? cookie)

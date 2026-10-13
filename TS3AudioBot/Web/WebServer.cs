@@ -93,14 +93,20 @@ namespace TS3AudioBot.Web
 			return null;
 		}
 
-		private void StartWebServerInternal()
+		internal void StartWebServerInternal()
 		{
+			// Validate TLS before creating an application or changing authentication state.
+			var certificate = config.UseSsl.Value
+				? GetOrCreateCertificate(config) ?? throw new InvalidOperationException("HTTPS certificate could not be loaded; refusing to start an HTTP listener.")
+				: null;
+			sslBound = certificate is not null;
 			cancelToken?.Cancel();
 			cancelToken?.Dispose();
 			cancelToken = new CancellationTokenSource();
 
 			var auth = new AuthService(Directory.GetCurrentDirectory());
 			Api.ApiV2.Auth = auth;
+			var corsOrigins = ValidateCorsOrigins(config.CorsOrigins.Value);
 
 			var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 			{
@@ -110,19 +116,14 @@ namespace TS3AudioBot.Web
 
 			builder.WebHost.ConfigureKestrel(kestrel =>
 			{
-				kestrel.Limits.MaxRequestBodySize = 30_000_000; // 30 MiB
+				kestrel.Limits.MaxRequestBodySize = 1_048_576; // bounded JSON requests
 				// the legacy v1 api writes responses synchronously
 				kestrel.AllowSynchronousIO = true;
 
 				// HTTPS (with the legacy v1 api on the same port, plain http is off)
-				if (config.UseSsl.Value)
+				if (certificate is not null)
 				{
-					var cert = GetOrCreateCertificate(config);
-					if (cert != null)
-					{
-						kestrel.ListenAnyIP(config.Port.Value, listen => listen.UseHttps(cert));
-						sslBound = true;
-					}
+					kestrel.ListenAnyIP(config.Port.Value, listen => listen.UseHttps(certificate));
 				}
 			});
 			builder.Logging.ClearProviders();
@@ -131,12 +132,26 @@ namespace TS3AudioBot.Web
 			{
 				options.AddPolicy("TS3AB", policy =>
 				{
-					policy.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader();
+					if (corsOrigins.Length > 0)
+						policy.WithOrigins(corsOrigins).AllowAnyMethod().AllowAnyHeader();
 				});
 			});
 
 			var app = builder.Build();
 			this.app = app;
+
+			app.Use(async (ctx, next) =>
+			{
+				ctx.Response.Headers["X-Content-Type-Options"] = "nosniff";
+				ctx.Response.Headers["X-Frame-Options"] = "DENY";
+				ctx.Response.Headers["Content-Security-Policy"] = "frame-ancestors 'none'; object-src 'none'; base-uri 'self'";
+				ctx.Response.Headers["Referrer-Policy"] = "no-referrer";
+				if (ctx.Request.IsHttps)
+					ctx.Response.Headers["Strict-Transport-Security"] = "max-age=31536000";
+				if (ctx.Request.Path.StartsWithSegments("/api"))
+					ctx.Response.Headers["Cache-Control"] = "no-store";
+				await next();
+			});
 
 			app.UseCors("TS3AB");
 
@@ -147,18 +162,12 @@ namespace TS3AudioBot.Web
 				{
 					var subPath = ctx.Request.Path.Value!.Substring("/api".Length);
 
-					// login/state must be reachable without credentials
-					var v2 = subPath.StartsWith("/v2", StringComparison.Ordinal);
-					if (v2 && Api.ApiV2.IsPublicPath(subPath.Substring(3)))
-					{
-						try { await Api.ApiV2.HandleAsync(ctx, coreInjector, subPath.Substring(3)); }
-						catch (Exception ex) { Log.Error("Error in api v2: {0}", ex.ToString()); }
-						return;
-					}
+					var v2 = new PathString(subPath).StartsWithSegments("/v2", StringComparison.OrdinalIgnoreCase);
+					var isPublic = v2 && Api.ApiV2.IsPublicPath(subPath.Substring(3));
 
 					// shared-key gate for EVERYTHING under /api (the v1 bridge can
 					// execute commands and would be a remote code execution hole)
-					if (!IsAuthorized(ctx, auth))
+					if (!isPublic && !IsAuthorized(ctx, auth))
 					{
 						ctx.Response.StatusCode = 401;
 						ctx.Response.ContentType = "application/json";
@@ -166,11 +175,20 @@ namespace TS3AudioBot.Web
 						return;
 					}
 
-					if (subPath.StartsWith("/v2", StringComparison.Ordinal))
+					if (v2)
 					{
 						try
 						{
 							await Api.ApiV2.HandleAsync(ctx, coreInjector, subPath.Substring(3));
+						}
+						catch (BadHttpRequestException ex)
+						{
+							if (!ctx.Response.HasStarted)
+							{
+								ctx.Response.StatusCode = ex.StatusCode;
+								ctx.Response.ContentType = "application/json";
+								await ctx.Response.WriteAsync("{\"error\":\"请求格式无效或请求体过大\"}");
+							}
 						}
 						catch (Exception ex)
 						{
@@ -179,7 +197,7 @@ namespace TS3AudioBot.Web
 							{
 								ctx.Response.StatusCode = 500;
 								ctx.Response.ContentType = "application/json";
-								await ctx.Response.WriteAsync("{\"error\":\"服务器内部错误: " + ex.Message.Replace("\"", "'") + "\"}");
+								await ctx.Response.WriteAsync("{\"error\":\"服务器内部错误\"}");
 							}
 						}
 						return;
@@ -317,7 +335,7 @@ namespace TS3AudioBot.Web
 			}
 			catch (Exception ex)
 			{
-				Log.Error(ex, "Could not set up the https certificate; falling back to http");
+				Log.Error(ex, "Could not set up the HTTPS certificate; the web server will not start");
 				return null;
 			}
 		}
@@ -342,13 +360,28 @@ namespace TS3AudioBot.Web
 			}
 		}
 
-		/// <summary>Shared-key check: Bearer token, X-API-Key or ?key= (sse/scripts).</summary>
+		internal static string[] ValidateCorsOrigins(System.Collections.Generic.IEnumerable<string> origins)
+		{
+			return origins.Select(origin =>
+			{
+				if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri)
+					|| (uri.Scheme != "https" && uri.Scheme != "http")
+					|| uri.Host.Contains('*') || uri.UserInfo.Length != 0
+					|| uri.AbsolutePath != "/" || uri.Query.Length != 0 || uri.Fragment.Length != 0)
+					throw new ArgumentException("cors_origins must contain exact HTTP(S) origins without wildcards, credentials or paths.");
+				return uri.GetLeftPart(UriPartial.Authority);
+			}).ToArray();
+		}
+
+		/// <summary>Certificate reload state.</summary>
 		private DateTime? _certStamp;
 		private System.Threading.Timer? _certReloadTimer;
 		private int _reloading;
 
 		private void StartCertificateReloadWatch()
 		{
+			_certReloadTimer?.Dispose();
+			_certReloadTimer = null;
 			if (!config.UseSsl.Value || string.IsNullOrWhiteSpace(config.SslCert.Value))
 				return;
 			_certStamp = CurrentCertStamp();
@@ -371,7 +404,7 @@ namespace TS3AudioBot.Web
 				}
 				catch (Exception ex)
 				{
-					Log.Error(ex, "Certificate reload failed; keeping the old listener");
+					Log.Error(ex, "Certificate reload failed; refusing to fall back to plaintext HTTP");
 					try { StartWebServerInternal(); } catch (Exception ex2) { Log.Error(ex2, "Web server restart after failed reload also failed"); }
 				}
 				finally { Interlocked.Exchange(ref _reloading, 0); }
@@ -401,7 +434,7 @@ namespace TS3AudioBot.Web
 			app = null;
 		}
 
-		private static bool IsAuthorized(HttpContext ctx, AuthService auth)
+		internal static bool IsAuthorized(HttpContext ctx, AuthService auth)
 		{
 			if (!auth.AuthEnabled)
 				return true;
@@ -414,10 +447,6 @@ namespace TS3AudioBot.Web
 			if (!string.IsNullOrWhiteSpace(apiKey))
 				return auth.ValidateAny(apiKey.Trim());
 
-			var queryKey = ctx.Request.Query["key"].ToString();
-			if (!string.IsNullOrWhiteSpace(queryKey))
-				return auth.ValidateAny(queryKey.Trim());
-
 			return false;
 		}
 
@@ -429,6 +458,8 @@ namespace TS3AudioBot.Web
 		public void Dispose()
 		{
 			Log.Info("WebServer is closing");
+			_certReloadTimer?.Dispose();
+			_certReloadTimer = null;
 
 			try { app?.StopAsync().Wait(TimeSpan.FromSeconds(3)); } catch (Exception) { }
 			try { app?.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(3)); } catch (Exception) { }

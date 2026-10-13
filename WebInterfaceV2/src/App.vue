@@ -1,7 +1,7 @@
 <script setup>
 import { onMounted, onUnmounted, ref, computed } from 'vue'
 import { store, selectBot, activeBotId, activeBotState, refreshStatus, showToast } from './store.js'
-import { api, connectEvents, getToken } from './api.js'
+import { api, connectEvents, getToken, clearCredentials } from './api.js'
 import PlayerBar from './components/PlayerBar.vue'
 import LoginView from './components/LoginView.vue'
 import PlayerTab from './components/PlayerTab.vue'
@@ -28,9 +28,25 @@ function onEvent(data) {
 }
 
 function onAuthFail() {
+  clearCredentials()
   loggedIn.value = false
   closeEvents?.()
   closeEvents = null
+  store.bots = []
+  store.botState = {}
+  store.activeBot = ''
+}
+
+async function logout() {
+  // Capture and send the token before clearing this tab's sensitive state.
+  const ending = api.logout()
+  onAuthFail()
+  try {
+    await ending
+    showToast('已退出登录')
+  } catch {
+    showToast('本地已退出；服务器注销未确认，原会话可能仍有效', 'error')
+  }
 }
 
 function switchTab(id) {
@@ -83,7 +99,7 @@ const state = computed(() => activeBotState())
         </select>
       </div>
       <div class="bot-switch">
-        <label style="cursor: pointer" @click="onAuthFail(); showToast('已退出登录')">退出登录</label>
+        <label style="cursor: pointer" @click="logout">退出登录</label>
       </div>
     </aside>
 
@@ -99,8 +115,8 @@ const state = computed(() => activeBotState())
       <PlayerBar v-if="state" />
     </div>
 
-    <div v-if="store.toast" class="toast" :class="store.toast.kind">
-      {{ store.toast.msg }}
-    </div>
+  </div>
+  <div v-if="store.toast" class="toast" :class="store.toast.kind">
+    {{ store.toast.msg }}
   </div>
 </template>

@@ -97,9 +97,10 @@ namespace TS3AudioBot.Web.Api
 
 			// while the user's cookie is still in scope, resolve vip track urls so
 			// the full versions get cached; the cookie itself is never persisted
+			// warm the cache: vip tracks with the user's cookie if provided in this
+			// request, everything else anonymously
 			var cookie = NeteaseCookieContext.Current;
-			if (!string.IsNullOrWhiteSpace(cookie))
-				_ = Task.Run(() => WarmCacheAsync(netease, cookie, playlist.Items.ToList()));
+			_ = Task.Run(() => WarmCacheAsync(netease, cookie ?? "", playlist.Items.ToList()));
 
 			return new NeteaseImportResult
 			{
@@ -229,6 +230,8 @@ namespace TS3AudioBot.Web.Api
 			// phase 1: vip songs with the user's cookie
 			foreach (var (songId, isVip) in pending.Where(p => p.isVip))
 			{
+				if (string.IsNullOrEmpty(cookie))
+					break; // no cookie in scope: vip full versions can't be fetched
 				if (await WarmOne(netease, cache, songId, isVip, cookie).ConfigureAwait(false)) vipWarmed++;
 			}
 			// phase 2: everything else, anonymously

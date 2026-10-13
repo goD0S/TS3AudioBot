@@ -86,6 +86,7 @@ namespace TS3AudioBot
 			YoutubeDlHelper.DataObj = config.Tools.YoutubeDl;
 
 			injector.GetModuleOrThrow<CommandManager>().RegisterCollection(MainCommands.Bag);
+			injector.GetModuleOrThrow<CommandManager>().RegisterCollection(NeteaseChatCommands.Bag);
 			injector.GetModuleOrThrow<RightsManager>().CreateConfigIfNotExists(setup.Interactive);
 			injector.GetModuleOrThrow<WebServer>().StartWebServer();
 			injector.GetModuleOrThrow<Stats>().StartTimer(setup.SendStats);

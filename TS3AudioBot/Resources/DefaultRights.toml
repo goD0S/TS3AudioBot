@@ -13,6 +13,11 @@
 	
 	# Getting song info
 	"cmd.song",
+
+	# Modern queue / cache / netease commands
+	"cmd.queue.*",
+	"cmd.cache.*",
+	"cmd.wy.*",
 	"cmd.repeat",
 	"cmd.random",
 

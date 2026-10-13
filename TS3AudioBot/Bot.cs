@@ -168,6 +168,7 @@ namespace TS3AudioBot
 			ts3client.OnWhisperNoTarget += (s, e) => player.SetStall();
 
 			commandManager.RegisterCollection(MainCommands.Bag);
+			commandManager.RegisterCollection(NeteaseChatCommands.Bag);
 			// TODO remove after plugin rework
 			var pluginManager = Injector.GetModuleOrThrow<PluginManager>();
 			foreach (var plugin in pluginManager.Plugins)

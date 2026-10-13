@@ -10,6 +10,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using TS3AudioBot.Algorithm;
 using TS3AudioBot.Audio;
@@ -377,6 +378,7 @@ namespace TS3AudioBot
 
 		public Task UpdateBotStatus()
 		{
+			StartLyricLoopIfNeeded();
 			return Scheduler.InvokeAsync(UpdateBotStatusInternal);
 		}
 
@@ -388,6 +390,11 @@ namespace TS3AudioBot
 				return;
 
 			if (!config.SetStatusDescription)
+				return;
+
+			// while the lyric loop owns the description for a netease song,
+			// the plain title must not overwrite it
+			if (config.LyricsDescription.Value && LyricLoopOwnsDescription())
 				return;
 
 			string? setString;
@@ -404,6 +411,119 @@ namespace TS3AudioBot
 
 			var result = await ts3FullClient.ChangeDescription(setString ?? "");
 			result.UnwrapToLog(Log);
+		}
+
+		// ---------- lyrics in the client description (karaoke style) ----------
+
+		private long? lyricSongId;
+		private CancellationTokenSource? lyricCts;
+
+		private bool LyricLoopOwnsDescription()
+		{
+			var res = playManager.CurrentPlayData?.ResourceData;
+			if (res is null)
+				return false;
+			return lyricCts != null
+				&& long.TryParse(res.ResourceId, out var id)
+				&& lyricSongId == id;
+		}
+
+		/// <summary>
+		/// Starts (or restarts) the background loop which updates the client
+		/// description with the current lyric line, synced to the play position.
+		/// One line per update stays far below the 200 char server limit.
+		/// </summary>
+		private void StartLyricLoopIfNeeded()
+		{
+			if (!config.LyricsDescription.Value || !config.SetStatusDescription.Value)
+				return;
+			var res = playManager.CurrentPlayData?.ResourceData;
+			if (res is null
+				|| !string.Equals(res.AudioType, "netease", StringComparison.OrdinalIgnoreCase)
+				|| !long.TryParse(res.ResourceId, out var songId)
+				|| songId == 0)
+				return;
+			if (lyricSongId == songId && lyricCts != null && !lyricCts.IsCancellationRequested)
+				return; // already running for this song
+
+			lyricCts?.Cancel();
+			lyricCts = new CancellationTokenSource();
+			lyricSongId = songId;
+			var token = lyricCts.Token;
+			_ = Task.Run(() => LyricLoop(songId, token), token);
+		}
+
+		public void StopLyricLoop()
+		{
+			lyricCts?.Cancel();
+			lyricSongId = null;
+		}
+
+		private async Task LyricLoop(long songId, CancellationToken token)
+		{
+			try
+			{
+				var lines = await ResourceFactories.Netease.NeteaseApi.GetLyricLinesAsync(songId).ConfigureAwait(false);
+				if (lines is null || lines.Length == 0)
+					return; // no lyrics: keep the plain title description
+
+				Log.Info("Lyric loop started for netease song {0} ({1} lines)", songId, lines.Length);
+				string? lastSent = null;
+				var lastSentAt = DateTime.MinValue;
+
+				while (!token.IsCancellationRequested)
+				{
+					if (!playManager.IsPlaying || isClosed)
+						break;
+					var res = playManager.CurrentPlayData?.ResourceData;
+					if (res is null || !long.TryParse(res.ResourceId, out var nowId) || nowId != songId)
+						break; // another song took over
+
+					var player = Injector.GetModuleOrThrow<Player>();
+					if (player.Paused)
+					{
+						await Task.Delay(1000, token).ConfigureAwait(false);
+						continue;
+					}
+
+					var pos = player.Position;
+					if (pos.HasValue)
+					{
+						string? text = null;
+						foreach (var line in lines)
+						{
+							if (line.Time > pos.Value)
+								break;
+							text = line.Text;
+						}
+
+						// only push when the line actually changed (flood friendly)
+						if (text != lastSent && (DateTime.UtcNow - lastSentAt) >= TimeSpan.FromSeconds(3))
+						{
+							lastSent = text;
+							lastSentAt = DateTime.UtcNow;
+							var toSend = string.IsNullOrEmpty(text) ? "♪ ～" : "♪ " + text;
+							await Scheduler.InvokeAsync(async () =>
+							{
+								var r = await ts3FullClient.ChangeDescription(toSend);
+								r.UnwrapToLog(Log);
+							}).ConfigureAwait(false);
+						}
+					}
+
+					await Task.Delay(1000, token).ConfigureAwait(false);
+				}
+			}
+			catch (OperationCanceledException) { }
+			catch (Exception ex)
+			{
+				Log.Warn(ex, "Lyric loop crashed for song {0}", songId);
+			}
+			finally
+			{
+				if (lyricSongId == songId)
+					lyricSongId = null;
+			}
 		}
 
 		public Task GenerateStatusImage(bool playing, PlayInfoEventArgs? startEvent)

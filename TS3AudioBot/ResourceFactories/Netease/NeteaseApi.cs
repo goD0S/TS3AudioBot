@@ -175,6 +175,72 @@ namespace TS3AudioBot.ResourceFactories.Netease
 			};
 		}
 
+		private static readonly System.Collections.Concurrent.ConcurrentDictionary<long, LyricLine[]> LyricCache =
+			new System.Collections.Concurrent.ConcurrentDictionary<long, LyricLine[]>();
+
+		public sealed class LyricLine
+		{
+			public TimeSpan Time { get; }
+			public string Text { get; }
+			public LyricLine(TimeSpan time, string text) { Time = time; Text = text; }
+		}
+
+		/// <summary>Fetches the timestamped lyric lines of a song (works anonymously).</summary>
+		public static async Task<LyricLine[]?> GetLyricLinesAsync(long songId)
+		{
+			if (LyricCache.TryGetValue(songId, out var cached))
+				return cached;
+			try
+			{
+				var json = await GetJson($"{ApiBase}/api/song/lyric?id={songId}&lv=1&kv=1&tv=-1", null).ConfigureAwait(false);
+				var lrc = (json["lrc"] as JObject)?["lyric"]?.Value<string>();
+				if (string.IsNullOrWhiteSpace(lrc))
+				{
+					LyricCache[songId] = Array.Empty<LyricLine>(); // instrumental / no lyrics
+					return Array.Empty<LyricLine>();
+				}
+
+				var lines = new List<LyricLine>();
+				foreach (var rawLine in lrc.Split('\n'))
+				{
+					var line = rawLine.TrimEnd('\r').Trim();
+					if (line.Length == 0)
+						continue;
+					if (System.Text.RegularExpressions.Regex.IsMatch(line, @"^\[(ti|ar|al|by|offset|re|ve):", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+						continue;
+
+					// a line may carry several timestamps: [00:01.00][03:30.00] text
+					var times = new List<TimeSpan>();
+					while (true)
+					{
+						var m = System.Text.RegularExpressions.Regex.Match(line, @"^\[(\d+):(\d+)(?:[.:](\d+))?\]");
+						if (!m.Success)
+							break;
+						var t = new TimeSpan(0, int.Parse(m.Groups[1].Value), int.Parse(m.Groups[2].Value));
+						if (m.Groups[3].Success)
+							t += TimeSpan.FromMilliseconds(int.Parse(m.Groups[3].Value.PadRight(3, '0')));
+						times.Add(t);
+						line = line.Substring(m.Length).Trim();
+					}
+					if (times.Count == 0 || line.Length == 0)
+						continue;
+					if (line.Length > 60)
+						line = line.Substring(0, 60) + "…";
+					foreach (var t in times)
+						lines.Add(new LyricLine(t, line));
+				}
+
+				var result = lines.OrderBy(l => l.Time).ToArray();
+				LyricCache[songId] = result;
+				return result;
+			}
+			catch (Exception ex)
+			{
+				Log.Warn("Could not fetch lyrics for {0}: {1}", songId, ex.Message);
+				return null;
+			}
+		}
+
 		/// <summary>Validates a MUSIC_U cookie; returns the account nickname and vip state.</summary>
 		public static async Task<(string nickname, bool vip)?> GetAccountProfile(string cookie)
 		{

@@ -172,6 +172,10 @@ namespace TS3AudioBot.Config
 			"Tries to fetch a cover image when playing.");
 		public ConfigValue<bool> SetStatusDescription { get; } = new ConfigValue<bool>("set_status_description", true,
 			"Sets the description of the bot to the current song title.");
+		public ConfigValue<bool> LyricsDescription { get; } = new ConfigValue<bool>("lyrics_description", true,
+			"When playing a netease song, shows its lyrics in the bot description instead of\n" +
+			"just the title. TeamSpeak limits descriptions to 200 chars, so only the\n" +
+			"beginning of the lyrics fits; falls back to the title when none are found.");
 		public ConfigValue<string> Language { get; } = new ConfigValue<string>("language", "en",
 			"The language the bot should use to respond to users. (Make sure you have added the required language packs)");
 		public ConfigValue<bool> Run { get; } = new ConfigValue<bool>("run", false,

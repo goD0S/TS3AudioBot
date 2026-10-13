@@ -1,3 +1,40 @@
+# TS3AudioBot (modernized fork)
+
+> A modernized fork of [Splamy/TS3AudioBot](https://github.com/Splamy/TS3AudioBot) — see the change log below. 中文说明见下方。
+
+**What's in this fork:**
+
+- **NetEase Cloud Music (music.163.com) integration**
+  - `!play <playlist url|id>`, `!play <song url|id>` or bare song ids; playlist import keeps full metadata (title / artists / album / cover / vip flag)
+  - Optional per-user `MUSIC_U` cookie (web ui guided, browser-stored, **used once per request and never persisted server-side**); cookies are only ever sent for VIP songs — free songs resolve fully anonymously
+  - Local song cache: everything played or imported gets cached; VIP full versions are stored with priority and evicted last, free songs first; trial clips are never cached
+- **New web interface** (`WebInterfaceV2`, Vue 3 + Vite, served from `WebInterface/`)
+  - Player with queue management, playlist library, NetEase import/search/migration, local bot instance management (create / connect / rename / move to channel), cache dashboard
+  - New structured REST api under `/api/v2` + SSE live state; the legacy v1 command bridge stays fully compatible
+- **Security**
+  - Shared-key authentication for everything under `/api` (the v1 bridge exposes the full command system incl. C# scripting — never run this unauthenticated)
+  - HMAC-signed bearer tokens, per-ip login rate limiting, constant-time comparisons
+- **HTTPS built in** (Kestrel): auto-generated self-signed certificate, or point `ssl_cert` at your own PEM/PFX (acme.sh friendly), automatic certificate reload after renewals
+- **Modernization**
+  - .NET Core 3.1 → **.NET 8** (incl. ref-safety fixes in TSLib, single-file publish fixes)
+  - yt-dlp support (preferred over the dead youtube-dl)
+  - Bug fixes: JSON `JValue` null traps, playlist folder-cache population, `settings`-style runtime fixes
+
+Build: `dotnet publish TS3AudioBot -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=true`
+The web interface needs a one-time `npm i && npm run build` in `WebInterfaceV2` (the built `dist/` is committed).
+
+---
+
+**中文说明：**
+
+- 网易云音乐全集成：歌单/歌曲链接、裸 ID 直接播放；网页端一键导入歌单（封面/歌手/专辑/VIP 标记完整保留）
+- MUSIC_U cookie 由用户在网页端自己提供（教程内置），只存浏览器、随单次请求用完即焚，且仅用于 VIP 歌曲；所有歌曲都会缓存，VIP 完整版最晚清理
+- 全新 Web 界面（Vue 3）：播放器/队列、歌单库、网易云导入与搜索、bot 实例管理（创建/连接/改名/进频道）、缓存面板；`/api/v2` REST + SSE，旧 v1 命令桥完全兼容
+- 共享密钥登录（HMAC token + 登录限速），内建 HTTPS（自动自签证书，也支持 acme.sh/Let's Encrypt 证书并自动热重载）
+- 运行时升级到 .NET 8，yt-dlp 支持，多项上游 bug 修复
+
+---
+
 # TS3AudioBot
 
 This is a open-source TeamSpeak3 bot, playing music and much more.  

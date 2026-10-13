@@ -219,6 +219,51 @@ namespace TS3AudioBot.Playlists
 			}
 		}
 
+		/// <summary>Patches the persistent metadata of a playlist (cover, source, ...).</summary>
+		public E<LocalStr> UpdateMeta(string listId, Action<PlaylistMeta> patch)
+		{
+			try
+			{
+				rwLock.EnterWriteLock();
+
+				if (!playlistInfo.ContainsKey(listId))
+				{
+					var read = ReadInternal(listId, hasReadLock: false, hasWriteLock: true);
+					if (!read.Ok)
+						return read.Error;
+				}
+
+				var meta = playlistInfo[listId];
+				patch(meta);
+				meta.UpdatedAt = DateTime.UtcNow;
+
+				if (playlistCache.TryGetValue(listId, out var plist))
+					return WriteToFile(listId, plist);
+				return R.Ok;
+			}
+			finally
+			{
+				rwLock.ExitWriteLock();
+			}
+		}
+
+		/// <summary>Returns the metadata for all playlists (for rich list views).</summary>
+		public IList<(string Id, PlaylistMeta Meta)> ListMetas()
+		{
+			if (reloadFolderCache)
+				ListPlaylists(null); // populate the folder cache first
+
+			try
+			{
+				rwLock.EnterReadLock();
+				return playlistInfo.Select(kvp => (Id: kvp.Key, Meta: kvp.Value)).ToList();
+			}
+			finally
+			{
+				rwLock.ExitReadLock();
+			}
+		}
+
 		private E<LocalStr> WriteToFile(string listId, IReadOnlyPlaylist plist)
 		{
 			var fi = NameToFile(listId);
@@ -401,5 +446,13 @@ namespace TS3AudioBot.Playlists
 		public string Title { get; set; } = string.Empty;
 		[JsonIgnore]
 		public int Version { get; set; }
+		[JsonProperty(PropertyName = "cover", NullValueHandling = NullValueHandling.Ignore)]
+		public string? CoverUrl { get; set; }
+		[JsonProperty(PropertyName = "source", NullValueHandling = NullValueHandling.Ignore)]
+		public string? Source { get; set; }
+		[JsonProperty(PropertyName = "creator", NullValueHandling = NullValueHandling.Ignore)]
+		public string? Creator { get; set; }
+		[JsonProperty(PropertyName = "updated", NullValueHandling = NullValueHandling.Ignore)]
+		public DateTime? UpdatedAt { get; set; }
 	}
 }

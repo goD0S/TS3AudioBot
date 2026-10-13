@@ -67,6 +67,14 @@ namespace TS3AudioBot.ResourceFactories
 			var youtubeDlPath = YoutubeDlPath;
 			if (string.IsNullOrEmpty(youtubeDlPath))
 			{
+				// prefer yt-dlp (actively maintained) over youtube-dl
+				foreach (var dir in new[] { "/usr/local/bin", "/usr/bin", Directory.GetCurrentDirectory() })
+				{
+					var ytdlp = Path.Combine(dir, "yt-dlp");
+					if (File.Exists(ytdlp))
+						return (ytdlp, "");
+				}
+
 				// Default path youtube-dl is suggesting to install
 				const string defaultYtDlPath = "/usr/local/bin/youtube-dl";
 				if (File.Exists(defaultYtDlPath))
@@ -92,10 +100,13 @@ namespace TS3AudioBot.ResourceFactories
 			if (File.Exists(fullCustomPath) || File.Exists(fullCustomPath + ".exe"))
 				return (fullCustomPath, "");
 
-			// Example: /home/teamspeak where the binary 'youtube-dl' lies in ./teamspeak/
-			string fullCustomPathWithoutFile = Path.Combine(fullCustomPath, "youtube-dl");
-			if (File.Exists(fullCustomPathWithoutFile) || File.Exists(fullCustomPathWithoutFile + ".exe"))
-				return (fullCustomPathWithoutFile, "");
+			// Example: /home/teamspeak where the binary 'youtube-dl'/'yt-dlp' lies in ./teamspeak/
+			foreach (var name in new[] { "yt-dlp", "youtube-dl" })
+			{
+				string candidate = Path.Combine(fullCustomPath, name);
+				if (File.Exists(candidate) || File.Exists(candidate + ".exe"))
+					return (candidate, "");
+			}
 
 			// Example: /home/teamspeak/youtube-dl where 'youtube-dl' is the github project folder
 			string fullCustomPathGhProject = Path.Combine(fullCustomPath, "youtube_dl", "__main__.py");

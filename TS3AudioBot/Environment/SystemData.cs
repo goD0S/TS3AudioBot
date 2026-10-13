@@ -132,16 +132,13 @@ namespace TS3AudioBot.Environment
 
 		private static PlatformVersion? GetNetCoreVersion()
 		{
-			var assembly = typeof(System.Runtime.GCSettings).GetTypeInfo().Assembly;
-			var assemblyPath = assembly.CodeBase?.Split(new[] { '/', '\\' }, StringSplitOptions.RemoveEmptyEntries);
-			if (assemblyPath is null)
-				return null;
-			int netCoreAppIndex = Array.IndexOf(assemblyPath, "Microsoft.NETCore.App");
-			if (netCoreAppIndex <= 0 || netCoreAppIndex >= assemblyPath.Length - 2)
-				return null;
-			var version = assemblyPath[netCoreAppIndex + 1];
+			// Assembly.CodeBase is not supported when running from a single-file bundle;
+			// on .NET Core 3+ Environment.Version reports the actual runtime version.
+			var version = System.Environment.Version.ToString();
+			if (version.StartsWith("4.0.30319", StringComparison.Ordinal))
+				return null; // .NET Framework / Mono report the desktop version, let the next probes handle it
 			var semVer = ParseToSemVer(version);
-			return new PlatformVersion(Runtime.Core, $".NET Core ({version})", semVer);
+			return new PlatformVersion(Runtime.Core, $".NET ({version})", semVer);
 		}
 
 		private static PlatformVersion? GetMonoVersion()

@@ -9,6 +9,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using TS3AudioBot.Config;
 using TS3AudioBot.Helper;
 using TS3AudioBot.Localization;
@@ -195,6 +196,15 @@ namespace TS3AudioBot.Playlists
 
 			return playlistPool.Delete(listId);
 		}
+
+		/// <summary>Patches the persistent metadata of a playlist (cover, source, ...).</summary>
+		public E<LocalStr> SetPlaylistMeta(string listId, Action<PlaylistMeta> patch)
+			=> playlistPool.UpdateMeta(listId, patch);
+
+		public PlaylistMeta? GetPlaylistMeta(string listId)
+			=> playlistPool.ListMetas().FirstOrDefault(m => m.Id == listId).Meta;
+
+		public IList<(string Id, PlaylistMeta Meta)> GetAllPlaylistMetas() => playlistPool.ListMetas();
 
 		public R<PlaylistInfo[], LocalStr> GetAvailablePlaylists(string? pattern = null) => playlistPool.ListPlaylists(pattern);
 

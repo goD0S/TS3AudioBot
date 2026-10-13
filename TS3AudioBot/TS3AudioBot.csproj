@@ -4,8 +4,8 @@
     <RootNamespace>TS3AudioBot</RootNamespace>
     <AssemblyName>TS3AudioBot</AssemblyName>
     <OutputType>Exe</OutputType>
-    <LangVersion>8.0</LangVersion>
-    <TargetFramework>netcoreapp3.1</TargetFramework>
+    <LangVersion>12.0</LangVersion>
+    <TargetFramework>net8.0</TargetFramework>
     <TargetLatestRuntimePatch>true</TargetLatestRuntimePatch>
     <RollForward>Major</RollForward>
 
@@ -35,21 +35,21 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="CliWrap" Version="3.1.0" />
-    <PackageReference Include="CommandLineParser" Version="2.8.0" />
-    <PackageReference Include="NLog" Version="4.7.3" />
-    <PackageReference Include="Newtonsoft.Json" Version="12.0.3" />
+    <PackageReference Include="CliWrap" Version="3.6.6" />
+    <PackageReference Include="CommandLineParser" Version="2.9.1" />
+    <PackageReference Include="NLog" Version="4.7.15" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <PackageReference Include="LiteDB" Version="4.1.4" />
-    <PackageReference Include="Microsoft.AspNetCore.Cors" Version="2.2.0" />
-    <PackageReference Include="Microsoft.AspNetCore.Server.Kestrel" Version="2.2.0" />
-    <PackageReference Include="Microsoft.AspNetCore.StaticFiles" Version="2.2.0" />
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="3.7.0">
       <ExcludeAssets>analyzers</ExcludeAssets>
     </PackageReference>
     <PackageReference Include="Nett" Version="0.15.0" />
     <PackageReference Include="PlaylistsNET" Version="1.1.2" />
     <PackageReference Include="SixLabors.ImageSharp" Version="1.0.0" />
-    <TrimmerRootAssembly Include="System.Text.Json" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 
   <ItemGroup>
@@ -91,22 +91,4 @@
       <LastGenOutput>strings.Designer.cs</LastGenOutput>
     </EmbeddedResource>
   </ItemGroup>
-
-  <Target Name="GenerateGitVersion" BeforeTargets="BeforeCompile">
-    <ItemGroup>
-      <VersionBuildScript Include="build.csx" />
-      <VersionBuildOutputFile Include="$(IntermediateOutputPath)Version.g.cs" />
-    </ItemGroup>
-    <Exec Command="dotnet tool install --global dotnet-script" IgnoreExitCode="true" />
-    <Exec Command="dotnet tool install --global GitVersion.Tool" IgnoreExitCode="true" />
-    <Exec Command="dotnet script @(VersionBuildScript) -- @(VersionBuildOutputFile) $(Configuration)" IgnoreExitCode="true">
-      <Output TaskParameter="ExitCode" PropertyName="GitverExit" />
-    </Exec>
-    <ItemGroup Condition="$(GitverExit) == '0'">
-      <FileWrites Include="@(VersionBuildOutputFile)" />
-      <Compile Include="@(VersionBuildOutputFile)">
-        <AutoGen>True</AutoGen>
-      </Compile>
-    </ItemGroup>
-  </Target>
 </Project>

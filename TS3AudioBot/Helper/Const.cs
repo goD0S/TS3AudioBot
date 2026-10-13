@@ -19,6 +19,7 @@ namespace TS3AudioBot.Helper
 		public const string Playlists = "playlists";
 		public const string Avatars = "avatars";
 		public const string Music = "music";
+		public const string Cache = "cache";
 	}
 
 	public static class FilesConst

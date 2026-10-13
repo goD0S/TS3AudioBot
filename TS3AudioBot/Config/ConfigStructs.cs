@@ -56,6 +56,27 @@ namespace TS3AudioBot.Config
 		public ConfPath Media { get; } = Create<ConfPath>("media",
 			"The default path to look for local resources.");
 		public ConfResolverYoutube Youtube { get; } = Create<ConfResolverYoutube>("youtube");
+		public ConfResolverNetease Netease { get; } = Create<ConfResolverNetease>("netease",
+			"Settings for the NetEase Cloud Music (music.163.com) resolver.");
+	}
+
+	public class ConfResolverNetease : ConfigTable
+	{
+		public ConfigValue<string> Cookie { get; } = new ConfigValue<string>("cookie", "",
+			"Optional: the MUSIC_U cookie value of a NetEase Cloud Music account.\n" +
+			"Required to play (and cache) VIP songs. Get it from your browser after logging in\n" +
+			"on music.163.com (cookie name 'MUSIC_U'). Leave empty for anonymous access.");
+		public ConfigValue<int> Bitrate { get; } = new ConfigValue<int>("bitrate", 320000,
+			"Preferred audio bitrate in bit/s. Common values: 128000, 192000, 320000.");
+		public ConfigValue<bool> CacheEnabled { get; } = new ConfigValue<bool>("cache_enabled", true,
+			"Enable the local song cache. Everything gets cached (trial clips never do);\n" +
+			"vip full versions are evicted last, free songs first.");
+		public ConfigValue<int> CacheMaxMb { get; } = new ConfigValue<int>("cache_max_mb", 20480,
+			"Maximum cache size in MB. Free songs are evicted first, vip songs last.");
+		public ConfigValue<bool> AllowTrial { get; } = new ConfigValue<bool>("allow_trial", false,
+			"When a VIP song can't be played fully (no MUSIC_U cookie), netease may still\n" +
+			"serve a short trial clip. Set to true to accept those trials, false (default)\n" +
+			"to skip the song with an error instead. Trials are never cached.");
 	}
 
 	public class ConfResolverYoutube : ConfigTable
@@ -109,6 +130,16 @@ namespace TS3AudioBot.Config
 			"An array of all urls the web api should be possible to be accessed with.");
 		public ConfigValue<ushort> Port { get; } = new ConfigValue<ushort>("port", 58913,
 			"The port for the web server.");
+		public ConfigValue<bool> UseSsl { get; } = new ConfigValue<bool>("use_ssl", true,
+			"Serves the web interface and api over HTTPS. When no certificate is configured\n" +
+			"a self-signed certificate is generated automatically (your browser will show a\n" +
+			"one-time warning; accept it to continue). Strongly recommended when exposed\n" +
+			"to the internet, since the login key would otherwise travel unencrypted.");
+		public ConfigValue<string> SslCert { get; } = new ConfigValue<string>("ssl_cert", "",
+			"Optional path to a certificate file (PFX/PKCS#12) for HTTPS, e.g. from Let's Encrypt.\n" +
+			"Leave empty to use the automatically generated self-signed certificate (webssl.pfx).");
+		public ConfigValue<string> SslPassword { get; } = new ConfigValue<string>("ssl_password", "",
+			"Password for the certificate file, if it has one.");
 
 		public ConfWebApi Api { get; } = Create<ConfWebApi>("api");
 		public ConfWebInterface Interface { get; } = Create<ConfWebInterface>("interface");

@@ -33,6 +33,9 @@ namespace TS3AudioBot.ResourceFactories
 
 		public ResourceResolver(ConfFactories conf)
 		{
+			// netease before media: bare song ids (OnlyIfLast) are resolved as
+			// netease songs first; only real existing file paths still go to media
+			AddResolver(new Netease.NeteaseResolver(conf));
 			AddResolver(new MediaResolver());
 			AddResolver(new YoutubeResolver(conf.Youtube));
 			AddResolver(new SoundcloudResolver());
@@ -44,6 +47,15 @@ namespace TS3AudioBot.ResourceFactories
 			// ToLower for legacy reasons
 			allResolvers.TryGetValue(audioType.ToLowerInvariant(), out var resolver) && resolver is T resolverT
 				? resolverT
+				: null;
+
+		/// <summary>The local netease song cache, if the netease resolver is registered.</summary>
+		public Netease.NeteaseCache? NeteaseCacheOrNull() =>
+			NeteaseResolverOrNull()?.Cache;
+
+		public Netease.NeteaseResolver? NeteaseResolverOrNull() =>
+			allResolvers.TryGetValue("netease", out var resolver) && resolver is Netease.NeteaseResolver neteaseResolver
+				? neteaseResolver
 				: null;
 
 		private IEnumerable<(IResourceResolver, MatchCertainty)> GetResResolverByLink(ResolveContext ctx, string uri) =>
